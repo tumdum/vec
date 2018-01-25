@@ -36,7 +36,18 @@ struct helper {
 const size_t helper::page_size = sysconf(_SC_PAGESIZE);
 
 template <typename T, typename R = std::ratio<3, 2>>
-struct vector {
+class vector {
+    struct deleter {
+        deleter(const size_t size) : m_size(size) {}
+
+        void operator() (void* p) {
+            free_memory(p, m_size);
+        }
+    private:
+        size_t m_size;
+    };
+
+public:
     using value_type = T;
 
     using reference = T&;
@@ -51,20 +62,16 @@ struct vector {
     }
 
     vector(const memory_size memoryInBytes) 
-        : m_data(reserve_memory(memoryInBytes.value))
+        : m_data(reserve_memory(memoryInBytes.value), deleter{memoryInBytes.value})
         , m_mappingSize(memoryInBytes.value)
     {
         assert(sizeof(T) < helper::page_size);
 
-        if (m_data == MAP_FAILED) {
+        if (m_data.get() == MAP_FAILED) {
             throw std::bad_alloc();
         }
         realloc_cap(helper::page_size / sizeof(T));
-        m_start = (T*) m_data; // TODO: aligment
-    }
-
-    ~vector() {
-        free_memory(m_data, m_mappingSize);
+        m_start = (T*) m_data.get(); // TODO: aligment
     }
 
     reference operator[] (const size_t i) {
@@ -152,13 +159,13 @@ struct vector {
     }
 
     void freez() {
-        if (mprotect(m_data, m_capacity * sizeof(T), PROT_READ) != 0) {
+        if (mprotect(m_data.get(), m_capacity * sizeof(T), PROT_READ) != 0) {
             throw mprotect_error();
         }
     }
 
     void unfreez() {
-        if (mprotect(m_data, m_capacity * sizeof(T), PROT_READ | PROT_WRITE) != 0) {
+        if (mprotect(m_data.get(), m_capacity * sizeof(T), PROT_READ | PROT_WRITE) != 0) {
             throw mprotect_error();
         }
     }
@@ -179,7 +186,7 @@ private:
         if (bytes > m_mappingSize) {
             throw std::bad_alloc();
         }
-        if(mprotect(m_data, bytes, PROT_READ | PROT_WRITE) != 0) {
+        if(mprotect(m_data.get(), bytes, PROT_READ | PROT_WRITE) != 0) {
             throw mprotect_error();
         }
         m_capacity = bytes / sizeof(T);
@@ -202,7 +209,7 @@ private:
         return i >= 0 && i < m_size;
     }
 
-    void* m_data;
+    std::unique_ptr<void, deleter> m_data;
     T* m_start;
     size_t m_mappingSize;
     size_t m_capacity;
