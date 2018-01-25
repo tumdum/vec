@@ -1,0 +1,1 @@
+Vector that never copies elements when it needs to grow.
